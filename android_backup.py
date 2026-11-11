@@ -10,6 +10,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+from PIL import Image, ImageDraw, ImageFont
 
 # Set global appearance and default theme
 ctk.set_appearance_mode("Dark")
@@ -27,12 +28,72 @@ PHONE_FOLDERS = {
 
 CATEGORY_ICONS = {
     "Camera photos and videos": "📷",
-    "Screenshots": "📸",
-    "Pictures": "🖼️",
+    "Screenshots": "📱",
+    "Pictures": "🖼",
     "Videos": "🎬",
     "Downloads": "📥",
-    "Documents": "📄",
+    "Documents": "📁",
 }
+
+
+def load_category_icon_assets(size: int = 24) -> tuple[dict[str, ctk.CTkImage], dict[str, ctk.CTkImage]]:
+    """Generate high-DPI, full-color category icons with matching disabled states."""
+    font_path = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts", "seguiemj.ttf")
+    font = None
+    if os.path.exists(font_path):
+        try:
+            font = ImageFont.truetype(font_path, 48)
+        except Exception:
+            font = None
+
+    emoji_config = {
+        "Camera photos and videos": ("📷", "#2563EB"),
+        "Screenshots": ("📱", "#0891B2"),
+        "Pictures": ("🖼", "#059669"),
+        "Videos": ("🎬", "#DC2626"),
+        "Downloads": ("📥", "#D97706"),
+        "Documents": ("📁", "#7C3AED"),
+    }
+
+    normal_icons: dict[str, ctk.CTkImage] = {}
+    disabled_icons: dict[str, ctk.CTkImage] = {}
+
+    for label, (emo, fallback_color) in emoji_config.items():
+        canvas_dim = 64
+        rendered = False
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+        if font:
+            try:
+                temp = Image.new("RGBA", (canvas_dim, canvas_dim), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(temp)
+                draw.text((canvas_dim // 2, canvas_dim // 2), emo, font=font, anchor="mm", embedded_color=True)
+                bbox = temp.getbbox()
+                if bbox:
+                    cropped = temp.crop(bbox)
+                    w, h = cropped.size
+                    scale = min((size - 2) / w, (size - 2) / h)
+                    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+                    resized = cropped.resize((nw, nh), Image.Resampling.LANCZOS)
+                    img.paste(resized, ((size - nw) // 2, (size - nh) // 2), resized)
+                    rendered = True
+            except Exception:
+                rendered = False
+
+        if not rendered:
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=max(3, size // 5), fill=fallback_color)
+
+        # Muted / desaturated version for disabled state
+        gray = img.convert("LA").convert("RGBA")
+        r, g, b, a = gray.split()
+        a = a.point(lambda p: int(p * 0.40))
+        gray.putalpha(a)
+
+        normal_icons[label] = ctk.CTkImage(light_image=img, dark_image=img, size=(size, size))
+        disabled_icons[label] = ctk.CTkImage(light_image=gray, dark_image=gray, size=(size, size))
+
+    return normal_icons, disabled_icons
 
 
 def format_size(bytes_val: int | float) -> str:
@@ -107,11 +168,15 @@ class BackupApp(ctk.CTk):
             for label in PHONE_FOLDERS
         }
 
+        # High-DPI full-color category icon assets
+        self.category_icons, self.category_icons_disabled = load_category_icon_assets(size=24)
+
         # Restore options & detected data
         self.restore_incremental_var = ctk.BooleanVar(value=True)
         self.restore_scan_media_var = ctk.BooleanVar(value=True)
         self.restore_folder_vars: dict[str, ctk.BooleanVar] = {}
         self.restore_chk_widgets: dict[str, ctk.CTkCheckBox] = {}
+        self.restore_ico_widgets: dict[str, ctk.CTkLabel] = {}
         self.restore_name_widgets: dict[str, ctk.CTkLabel] = {}
         self.restore_badge_widgets: dict[str, ctk.CTkLabel] = {}
         self.restore_row_widgets: dict[str, ctk.CTkFrame] = {}
@@ -427,10 +492,9 @@ class BackupApp(ctk.CTk):
         list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 6))
 
         for label, phone_path in PHONE_FOLDERS.items():
-            icon = CATEGORY_ICONS.get(label, "📁")
             var = self.folder_vars[label]
 
-            row = ctk.CTkFrame(list_frame, corner_radius=6, fg_color=("gray95", "gray18"))
+            row = ctk.CTkFrame(list_frame, corner_radius=6, fg_color=("gray95", "gray18"), cursor="hand2")
             row.pack(fill="x", padx=2, pady=3)
 
             chk = ctk.CTkCheckBox(
@@ -446,18 +510,20 @@ class BackupApp(ctk.CTk):
 
             ico_lbl = ctk.CTkLabel(
                 row,
-                text=icon,
-                font=ctk.CTkFont(size=16),
-                width=28,
-                anchor="center",
+                text="",
+                image=self.category_icons[label],
+                width=24,
+                height=24,
+                cursor="hand2",
             )
-            ico_lbl.pack(side="left", padx=(0, 8), pady=6)
+            ico_lbl.pack(side="left", padx=(2, 6), pady=6)
 
             name_lbl = ctk.CTkLabel(
                 row,
                 text=label,
                 font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
                 anchor="w",
+                cursor="hand2",
             )
             name_lbl.pack(side="left", pady=6)
 
@@ -466,6 +532,7 @@ class BackupApp(ctk.CTk):
                 text=phone_path,
                 font=ctk.CTkFont(family="Segoe UI", size=11),
                 text_color=("gray50", "gray60"),
+                cursor="hand2",
             )
             path_badge.pack(side="right", padx=(0, 12), pady=6)
 
@@ -639,11 +706,10 @@ class BackupApp(ctk.CTk):
         restore_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 6))
 
         for label, path in PHONE_FOLDERS.items():
-            icon = CATEGORY_ICONS.get(label, "📁")
             var = ctk.BooleanVar(value=False)
             self.restore_folder_vars[label] = var
 
-            row = ctk.CTkFrame(restore_list_frame, corner_radius=6, fg_color=("gray95", "gray18"))
+            row = ctk.CTkFrame(restore_list_frame, corner_radius=6, fg_color=("gray95", "gray18"), cursor="hand2")
             row.pack(fill="x", padx=2, pady=3)
             self.restore_row_widgets[label] = row
 
@@ -662,12 +728,14 @@ class BackupApp(ctk.CTk):
 
             ico_lbl = ctk.CTkLabel(
                 row,
-                text=icon,
-                font=ctk.CTkFont(size=16),
-                width=28,
-                anchor="center",
+                text="",
+                image=self.category_icons_disabled[label],
+                width=24,
+                height=24,
+                cursor="hand2",
             )
-            ico_lbl.pack(side="left", padx=(0, 8), pady=6)
+            ico_lbl.pack(side="left", padx=(2, 6), pady=6)
+            self.restore_ico_widgets[label] = ico_lbl
 
             name_lbl = ctk.CTkLabel(
                 row,
@@ -675,6 +743,7 @@ class BackupApp(ctk.CTk):
                 font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
                 text_color=("gray60", "gray50"),
                 anchor="w",
+                cursor="hand2",
             )
             name_lbl.pack(side="left", pady=6)
             self.restore_name_widgets[label] = name_lbl
@@ -684,6 +753,7 @@ class BackupApp(ctk.CTk):
                 text="Scanning...",
                 font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
                 text_color=("gray50", "gray55"),
+                cursor="hand2",
             )
             badge_lbl.pack(side="right", padx=(0, 12), pady=6)
             self.restore_badge_widgets[label] = badge_lbl
@@ -855,6 +925,8 @@ class BackupApp(ctk.CTk):
                     )
                 if label in self.restore_chk_widgets:
                     self.restore_chk_widgets[label].configure(state="disabled")
+                if label in self.restore_ico_widgets:
+                    self.restore_ico_widgets[label].configure(image=self.category_icons_disabled[label])
                 if label in self.restore_name_widgets:
                     self.restore_name_widgets[label].configure(text_color=("gray60", "gray50"))
                 if label in self.restore_folder_vars:
@@ -868,6 +940,7 @@ class BackupApp(ctk.CTk):
         for label, phone_path in PHONE_FOLDERS.items():
             cat_dir = resolved / label
             chk = self.restore_chk_widgets.get(label)
+            ico = self.restore_ico_widgets.get(label)
             name_lbl = self.restore_name_widgets.get(label)
             badge_lbl = self.restore_badge_widgets.get(label)
             var = self.restore_folder_vars.get(label)
@@ -878,6 +951,8 @@ class BackupApp(ctk.CTk):
                     total_bytes = sum(p.stat().st_size for p in files)
                     if chk:
                         chk.configure(state="normal")
+                    if ico:
+                        ico.configure(image=self.category_icons[label])
                     if name_lbl:
                         name_lbl.configure(text_color=("gray10", "gray90"))
                     if badge_lbl:
@@ -892,6 +967,8 @@ class BackupApp(ctk.CTk):
 
             if chk:
                 chk.configure(state="disabled")
+            if ico:
+                ico.configure(image=self.category_icons_disabled[label])
             if name_lbl:
                 name_lbl.configure(text_color=("gray60", "gray50"))
             if badge_lbl:

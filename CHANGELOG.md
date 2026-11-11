@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.4.1] - 2026-11-11
+
+### Added
+- **Full-Color Category Icons**: Replaced generic black-and-white outline glyphs with high-DPI, full-color PIL-rendered category assets using Microsoft's color emoji engine (`embedded_color=True`) with crisp vector fallbacks.
+- **Dynamic Disabled Icon State**: Categories not present in the backup folder now automatically display a desaturated, semi-transparent icon in the Restore tab alongside disabled checkboxes.
+- **Interactive Row Cues**: Added `cursor="hand2"` pointer cues across rows, icons, and text labels for instant tactile clickability.
+
+### Fixed
+- **Unusual Icon-to-Text Gap**: Eliminated the wide, uneven gap between icons and category names (caused by Windows variation selector character metrics on "Pictures" and emoji cell padding). Standardized spacing to an exact 6 px across every category on both Backup and Restore tabs.
+
+---
+
 ## [2.4.0] - 2026-11-11
 
 ### Added
