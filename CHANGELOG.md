@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.5.0] - 2026-11-11
+
+### Added
+- **Embedded ADB Engine & DLLs**:
+  - Bundled `adb.exe` along with required Windows dependencies (`AdbWinApi.dll` and `AdbWinUsbApi.dll`) directly within the software repository and project directory.
+  - Eliminates the recurring hassle of manually browsing and locating `adb.exe` after every update or fresh checkout.
+- **Intelligent Multi-Tier ADB Auto-Discovery (`find_embedded_adb`)**:
+  - Automatically scans for the embedded binary in PyInstaller runtime environments (`sys._MEIPASS`), the script/executable directory, local `platform-tools/` and `bin/` folders, saved user preferences, and standard system installation directories.
+  - Seamlessly falls back across tiers with zero user intervention required.
+- **Persistent User Preferences**:
+  - Automatically saves and restores last-used ADB path, backup destination, and restore source directory in `~/.android_backup_suite.json` across app updates and machine reboots.
+- **UI "⚡ Embedded" Indicator Badge**:
+  - Highlights whether the currently active ADB binary is the bundled zero-configuration binary or an external custom binary.
+
+---
+
 ## [2.4.1] - 2026-11-11
 
 ### Added

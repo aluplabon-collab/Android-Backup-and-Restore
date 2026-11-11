@@ -4,24 +4,24 @@ A Windows desktop utility that backs up and restores common Android media and fi
 
 ## Requirements
 
-1. Windows 10 or later.
+1. Windows 10 or later (or Linux/macOS).
 2. Python 3.10+.
-3. CustomTkinter:
+3. Dependencies:
    ```powershell
-   pip install customtkinter
+   pip install -r requirements.txt
    ```
-4. Android Platform Tools (`adb.exe`), available from [Google](https://developer.android.com/tools/releases/platform-tools).
+4. **Embedded ADB Included**: The repository and application bundle `adb.exe`, `AdbWinApi.dll`, and `AdbWinUsbApi.dll` out of the box—no separate platform-tools installation or manual path selection is required!
 5. On the phone: enable **Developer options** and **USB debugging**, connect the phone, then accept the authorization prompt.
 
 ## Run
 
-From PowerShell:
+From PowerShell or Terminal:
 
 ```powershell
 python .\android_backup.py
 ```
 
-If `adb` is not on `PATH`, use **Browse...** to select `adb.exe`.
+The application automatically detects the embedded ADB binary, connects to the attached device, and persists your preferences across updates.
 
 ---
 

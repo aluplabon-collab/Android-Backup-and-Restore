@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import os
 import queue
+import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -122,6 +125,81 @@ def resolve_backup_dir(path_str: str) -> Path | None:
     return p
 
 
+CONFIG_PATH = Path.home() / ".android_backup_suite.json"
+
+
+def load_user_preferences() -> dict[str, str]:
+    if CONFIG_PATH.is_file():
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def save_user_preferences(prefs: dict[str, str]) -> None:
+    try:
+        current = load_user_preferences()
+        current.update(prefs)
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(current, f, indent=2)
+    except Exception:
+        pass
+
+
+def find_embedded_adb() -> str:
+    """Auto-detect embedded, bundled, local, or system ADB binary without requiring user manual entry."""
+    exe_name = "adb.exe" if os.name == "nt" else "adb"
+
+    # 1. PyInstaller frozen / bundled app directory
+    if getattr(sys, "frozen", False):
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        for candidate in (
+            base_dir / exe_name,
+            base_dir / "platform-tools" / exe_name,
+            base_dir / "bin" / exe_name,
+        ):
+            if candidate.is_file():
+                return str(candidate.resolve())
+
+    # 2. Project root / script directory (where adb.exe & DLLs are embedded)
+    script_dir = Path(__file__).resolve().parent
+    for candidate in (
+        script_dir / exe_name,
+        script_dir / "platform-tools" / exe_name,
+        script_dir / "bin" / exe_name,
+    ):
+        if candidate.is_file():
+            return str(candidate.resolve())
+
+    # 3. Saved user preferences from persistent config
+    saved = load_user_preferences().get("adb_path")
+    if saved and Path(saved).is_file():
+        return str(Path(saved).resolve())
+
+    # 4. Standard platform-tools installation paths on Windows
+    if os.name == "nt":
+        standard_paths = [
+            Path("D:/platform-tools/adb.exe"),
+            Path("C:/platform-tools/adb.exe"),
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+            Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Android" / "android-sdk" / "platform-tools" / "adb.exe",
+        ]
+        for p in standard_paths:
+            if p.is_file():
+                return str(p.resolve())
+
+    # 5. System PATH
+    which_adb = shutil.which("adb") or shutil.which("adb.exe")
+    if which_adb:
+        return str(Path(which_adb).resolve())
+
+    # 6. Fallback
+    return exe_name
+
+
 class AdbError(RuntimeError):
     pass
 
@@ -134,7 +212,13 @@ class BackupApp(ctk.CTk):
         self.minsize(920, 720)
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
-        self.adb_path = ctk.StringVar(value="adb")
+
+        # Preferences & Config Persistence
+        self.prefs = load_user_preferences()
+
+        # Auto-detect embedded ADB
+        default_adb = find_embedded_adb()
+        self.adb_path = ctk.StringVar(value=default_adb)
 
         # Telemetry & Font Sizing
         self.last_speed_time = 0.0
@@ -142,14 +226,20 @@ class BackupApp(ctk.CTk):
         self.current_speed_str = "0.0 B/s"
         self.log_font_size = 13
 
-        # Default paths
+        # Default paths with persistent memory
         default_dir = Path.home() / "Android Backups"
         local_override = Path("D:/Wondershare/New folder")
         if local_override.exists():
             default_dir = local_override
 
-        self.destination = ctk.StringVar(value=str(default_dir))
-        self.restore_source = ctk.StringVar(value=str(default_dir))
+        saved_dest = self.prefs.get("destination")
+        default_dest = saved_dest if saved_dest and Path(saved_dest).is_dir() else str(default_dir)
+
+        saved_restore = self.prefs.get("restore_source")
+        default_restore = saved_restore if saved_restore and Path(saved_restore).is_dir() else str(default_dir)
+
+        self.destination = ctk.StringVar(value=default_dest)
+        self.restore_source = ctk.StringVar(value=default_restore)
 
         self.status = ctk.StringVar(value="Connecting...")
         self.device_name = "No device detected"
@@ -234,9 +324,34 @@ class BackupApp(ctk.CTk):
         self.conn_card.grid_columnconfigure(1, weight=1)
 
         # Row 0: ADB Path
+        adb_title_box = ctk.CTkFrame(self.conn_card, fg_color="transparent")
+        adb_title_box.grid(row=0, column=0, sticky="w", padx=(14, 6), pady=(8, 4))
+
         ctk.CTkLabel(
-            self.conn_card, text="ADB Binary:", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
-        ).grid(row=0, column=0, sticky="w", padx=(14, 6), pady=(8, 4))
+            adb_title_box, text="ADB Binary:", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
+        ).pack(side="left")
+
+        is_embedded = False
+        try:
+            exe_target = Path(__file__).resolve().parent / ("adb.exe" if os.name == "nt" else "adb")
+            is_embedded = (
+                Path(self.adb_path.get()).resolve() == exe_target.resolve()
+                or getattr(sys, "frozen", False)
+            )
+        except Exception:
+            is_embedded = False
+
+        if is_embedded:
+            ctk.CTkLabel(
+                adb_title_box,
+                text="⚡ Embedded",
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                fg_color=("#DCFCE7", "#14532D"),
+                text_color=("#166534", "#4ADE80"),
+                corner_radius=4,
+                padx=6,
+                pady=1,
+            ).pack(side="left", padx=(6, 0))
 
         adb_entry = ctk.CTkEntry(self.conn_card, textvariable=self.adb_path, height=32, font=ctk.CTkFont(size=12))
         adb_entry.grid(row=0, column=1, sticky="ew", padx=4, pady=(8, 4))
@@ -856,23 +971,33 @@ class BackupApp(ctk.CTk):
             self.expand_btn.configure(text="🗕 Restore")
             self.console_maximized = True
 
+    def _save_preferences(self) -> None:
+        save_user_preferences({
+            "adb_path": self.adb_path.get(),
+            "destination": self.destination.get(),
+            "restore_source": self.restore_source.get(),
+        })
+
     def choose_adb(self) -> None:
         path = filedialog.askopenfilename(
             title="Select adb.exe", filetypes=[("ADB executable", "adb.exe"), ("All files", "*.*")]
         )
         if path:
             self.adb_path.set(path)
+            self._save_preferences()
             self.detect_device()
 
     def choose_destination(self) -> None:
         path = filedialog.askdirectory(title="Choose backup destination")
         if path:
             self.destination.set(path)
+            self._save_preferences()
 
     def choose_restore_source(self) -> None:
         path = filedialog.askdirectory(title="Choose backup folder to restore")
         if path:
             self.restore_source.set(path)
+            self._save_preferences()
             self.scan_restore_source()
 
     def select_all_backup(self) -> None:
@@ -1013,6 +1138,7 @@ class BackupApp(ctk.CTk):
             )
             self.status.set("Ready.")
             self._write_log(f"[Connected] Phone: {self.device_name}")
+            self._save_preferences()
         except AdbError as exc:
             self.device_name = "No device detected"
             self.device_badge.configure(
