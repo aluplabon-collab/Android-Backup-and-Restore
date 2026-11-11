@@ -111,7 +111,10 @@ class BackupApp(ctk.CTk):
         self.restore_incremental_var = ctk.BooleanVar(value=True)
         self.restore_scan_media_var = ctk.BooleanVar(value=True)
         self.restore_folder_vars: dict[str, ctk.BooleanVar] = {}
-        self.restore_folder_widgets: dict[str, ctk.CTkCheckBox] = {}
+        self.restore_chk_widgets: dict[str, ctk.CTkCheckBox] = {}
+        self.restore_name_widgets: dict[str, ctk.CTkLabel] = {}
+        self.restore_badge_widgets: dict[str, ctk.CTkLabel] = {}
+        self.restore_row_widgets: dict[str, ctk.CTkFrame] = {}
         self.detected_restore_files: dict[str, list[Path]] = {}
 
         self._build_ui()
@@ -278,11 +281,11 @@ class BackupApp(ctk.CTk):
 
         self.zoom_out_btn = ctk.CTkButton(
             btn_box,
-            text="A-",
+            text="A −",
             command=self.zoom_log_out,
-            width=36,
+            width=42,
             height=28,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             fg_color=("gray85", "gray25"),
             text_color=("gray10", "gray90"),
             hover_color=("gray75", "gray35"),
@@ -291,11 +294,11 @@ class BackupApp(ctk.CTk):
 
         self.zoom_in_btn = ctk.CTkButton(
             btn_box,
-            text="A+",
+            text="A +",
             command=self.zoom_log_in,
-            width=36,
+            width=42,
             height=28,
-            font=ctk.CTkFont(size=12, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
             fg_color=("gray85", "gray25"),
             text_color=("gray10", "gray90"),
             hover_color=("gray75", "gray35"),
@@ -419,19 +422,67 @@ class BackupApp(ctk.CTk):
             hover_color=("gray70", "gray35"),
         ).pack(side="left")
 
-        # Checkboxes list with larger font and larger checkbox
-        for label, path in PHONE_FOLDERS.items():
+        # Category list: perfectly aligned in a straight line with dedicated icon & badge columns
+        list_frame = ctk.CTkFrame(left_card, fg_color="transparent")
+        list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+
+        for label, phone_path in PHONE_FOLDERS.items():
             icon = CATEGORY_ICONS.get(label, "📁")
+            var = self.folder_vars[label]
+
+            row = ctk.CTkFrame(list_frame, corner_radius=6, fg_color=("gray95", "gray18"))
+            row.pack(fill="x", padx=2, pady=3)
+
             chk = ctk.CTkCheckBox(
-                left_card,
-                text=f"{icon}  {label}",
-                variable=self.folder_vars[label],
-                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                corner_radius=5,
+                row,
+                text="",
+                variable=var,
+                width=22,
                 checkbox_width=22,
                 checkbox_height=22,
+                corner_radius=5,
             )
-            chk.pack(anchor="w", padx=14, pady=4)
+            chk.pack(side="left", padx=(10, 6), pady=6)
+
+            ico_lbl = ctk.CTkLabel(
+                row,
+                text=icon,
+                font=ctk.CTkFont(size=16),
+                width=28,
+                anchor="center",
+            )
+            ico_lbl.pack(side="left", padx=(0, 8), pady=6)
+
+            name_lbl = ctk.CTkLabel(
+                row,
+                text=label,
+                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                anchor="w",
+            )
+            name_lbl.pack(side="left", pady=6)
+
+            path_badge = ctk.CTkLabel(
+                row,
+                text=phone_path,
+                font=ctk.CTkFont(family="Segoe UI", size=11),
+                text_color=("gray50", "gray60"),
+            )
+            path_badge.pack(side="right", padx=(0, 12), pady=6)
+
+            # Interactive toggle on click anywhere in row
+            def _bind_backup_toggle(v=var, r=row, c=chk, widgets=(ico_lbl, name_lbl, path_badge)):
+                def _do_toggle(event=None):
+                    v.set(not v.get())
+                def _enter(event=None):
+                    r.configure(fg_color=("gray90", "gray23"))
+                def _leave(event=None):
+                    r.configure(fg_color=("gray95", "gray18"))
+                for w in (r, *widgets):
+                    w.bind("<Button-1>", _do_toggle)
+                r.bind("<Enter>", _enter)
+                r.bind("<Leave>", _leave)
+
+            _bind_backup_toggle()
 
         # Right Column: Destination & Options
         right_card = ctk.CTkFrame(parent, corner_radius=8)
@@ -583,23 +634,76 @@ class BackupApp(ctk.CTk):
             hover_color=("gray70", "gray35"),
         ).pack(side="left")
 
-        # Category checkboxes list with larger font and larger checkbox
+        # Category list: perfectly aligned in a straight line with dedicated icon & status badge columns
+        restore_list_frame = ctk.CTkFrame(left_card, fg_color="transparent")
+        restore_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+
         for label, path in PHONE_FOLDERS.items():
             icon = CATEGORY_ICONS.get(label, "📁")
             var = ctk.BooleanVar(value=False)
             self.restore_folder_vars[label] = var
+
+            row = ctk.CTkFrame(restore_list_frame, corner_radius=6, fg_color=("gray95", "gray18"))
+            row.pack(fill="x", padx=2, pady=3)
+            self.restore_row_widgets[label] = row
+
             chk = ctk.CTkCheckBox(
-                left_card,
-                text=f"{icon}  {label} — (Scanning...)",
+                row,
+                text="",
                 variable=var,
-                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                corner_radius=5,
+                width=22,
                 checkbox_width=22,
                 checkbox_height=22,
+                corner_radius=5,
                 state="disabled",
             )
-            chk.pack(anchor="w", padx=14, pady=3)
-            self.restore_folder_widgets[label] = chk
+            chk.pack(side="left", padx=(10, 6), pady=6)
+            self.restore_chk_widgets[label] = chk
+
+            ico_lbl = ctk.CTkLabel(
+                row,
+                text=icon,
+                font=ctk.CTkFont(size=16),
+                width=28,
+                anchor="center",
+            )
+            ico_lbl.pack(side="left", padx=(0, 8), pady=6)
+
+            name_lbl = ctk.CTkLabel(
+                row,
+                text=label,
+                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+                text_color=("gray60", "gray50"),
+                anchor="w",
+            )
+            name_lbl.pack(side="left", pady=6)
+            self.restore_name_widgets[label] = name_lbl
+
+            badge_lbl = ctk.CTkLabel(
+                row,
+                text="Scanning...",
+                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                text_color=("gray50", "gray55"),
+            )
+            badge_lbl.pack(side="right", padx=(0, 12), pady=6)
+            self.restore_badge_widgets[label] = badge_lbl
+
+            # Interactive toggle on click anywhere in row
+            def _bind_restore_toggle(v=var, r=row, c=chk, widgets=(ico_lbl, name_lbl, badge_lbl)):
+                def _do_toggle(event=None):
+                    if c.cget("state") != "disabled":
+                        v.set(not v.get())
+                def _enter(event=None):
+                    if c.cget("state") != "disabled":
+                        r.configure(fg_color=("gray90", "gray23"))
+                def _leave(event=None):
+                    r.configure(fg_color=("gray95", "gray18"))
+                for w in (r, *widgets):
+                    w.bind("<Button-1>", _do_toggle)
+                r.bind("<Enter>", _enter)
+                r.bind("<Leave>", _leave)
+
+            _bind_restore_toggle()
 
         # Right Column: Settings & Action Buttons
         right_card = ctk.CTkFrame(parent, corner_radius=8)
@@ -743,10 +847,18 @@ class BackupApp(ctk.CTk):
     def scan_restore_source(self) -> None:
         resolved = resolve_backup_dir(self.restore_source.get())
         if resolved is None or not resolved.is_dir():
-            for label, chk in self.restore_folder_widgets.items():
-                icon = CATEGORY_ICONS.get(label, "📁")
-                chk.configure(text=f"{icon}  {label} — (Folder not found)", state="disabled")
-                self.restore_folder_vars[label].set(False)
+            for label in PHONE_FOLDERS:
+                if label in self.restore_badge_widgets:
+                    self.restore_badge_widgets[label].configure(
+                        text="(Folder not found)",
+                        text_color=("#EF4444", "#F87171"),
+                    )
+                if label in self.restore_chk_widgets:
+                    self.restore_chk_widgets[label].configure(state="disabled")
+                if label in self.restore_name_widgets:
+                    self.restore_name_widgets[label].configure(text_color=("gray60", "gray50"))
+                if label in self.restore_folder_vars:
+                    self.restore_folder_vars[label].set(False)
             return
 
         if resolved != Path(self.restore_source.get()):
@@ -754,24 +866,38 @@ class BackupApp(ctk.CTk):
 
         self.detected_restore_files.clear()
         for label, phone_path in PHONE_FOLDERS.items():
-            icon = CATEGORY_ICONS.get(label, "📁")
             cat_dir = resolved / label
-            chk = self.restore_folder_widgets[label]
-            var = self.restore_folder_vars[label]
+            chk = self.restore_chk_widgets.get(label)
+            name_lbl = self.restore_name_widgets.get(label)
+            badge_lbl = self.restore_badge_widgets.get(label)
+            var = self.restore_folder_vars.get(label)
+
             if cat_dir.is_dir():
                 files = [p for p in cat_dir.rglob("*") if p.is_file()]
                 if files:
                     total_bytes = sum(p.stat().st_size for p in files)
-                    chk.configure(
-                        text=f"{icon}  {label} — {len(files):,} files ({format_size(total_bytes)})",
-                        state="normal",
-                    )
-                    var.set(True)
+                    if chk:
+                        chk.configure(state="normal")
+                    if name_lbl:
+                        name_lbl.configure(text_color=("gray10", "gray90"))
+                    if badge_lbl:
+                        badge_lbl.configure(
+                            text=f"{len(files):,} files ({format_size(total_bytes)})",
+                            text_color=("#166534", "#4ADE80"),
+                        )
+                    if var:
+                        var.set(True)
                     self.detected_restore_files[label] = files
                     continue
 
-            chk.configure(text=f"{icon}  {label} — (Not in backup)", state="disabled")
-            var.set(False)
+            if chk:
+                chk.configure(state="disabled")
+            if name_lbl:
+                name_lbl.configure(text_color=("gray60", "gray50"))
+            if badge_lbl:
+                badge_lbl.configure(text="(Not in backup)", text_color=("gray50", "gray55"))
+            if var:
+                var.set(False)
 
     def _run_adb(self, *args: str, timeout: int = 30, check: bool = True) -> subprocess.CompletedProcess[str]:
         try:

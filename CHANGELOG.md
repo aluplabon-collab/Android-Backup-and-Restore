@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.4.0] - 2026-11-11
+
+### Added
+- **Structured Interactive Category Rows**:
+  - Re-architected category selectors in both Backup and Restore tabs into distinct interactive card rows (`corner_radius=6`).
+  - Added full-row clickability: clicking anywhere on a category row toggles the selection.
+  - Added subtle hover highlight styling (`gray90` / `gray23`) for visual feedback.
+  - Added dedicated right-aligned metadata badges: displays destination device path (e.g. `/sdcard/DCIM/Camera`) in Backup view, and real-time scanned file count & size badges in Restore view.
+
+### Changed
+- **Unified Font Alignment & Grid Columns**:
+  - Decoupled checkboxes, category icons, and text labels into strict, fixed-width column slots.
+  - Fixed font misalignment caused by Windows emoji glyph width variance: category text now starts at the exact same horizontal coordinate (74 px) across all rows.
+  - Upgraded category font to `13 pt bold Segoe UI`.
+
+### Fixed
+- **Zoom Button Character Clipping**: Widened console zoom buttons to `42 px` with `A −` formatting, preventing the minus sign from clipping on Windows display scalings.
+
+---
+
 ## [2.3.0] - 2026-11-11
 
 ### Added
@@ -55,7 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2.2.0] - 2026-11-11
+## [2.0.5] - 2026-11-11
 
 ### Added
 - **PC → Phone Restore Subsystem**:
