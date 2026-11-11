@@ -149,6 +149,21 @@ def save_user_preferences(prefs: dict[str, str]) -> None:
         pass
 
 
+def _is_executable_adb(path: Path) -> bool:
+    try:
+        res = subprocess.run(
+            [str(path), "version"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
 def find_embedded_adb() -> str:
     """Auto-detect embedded, bundled, local, or system ADB binary without requiring user manual entry."""
     exe_name = "adb.exe" if os.name == "nt" else "adb"
@@ -161,7 +176,7 @@ def find_embedded_adb() -> str:
             base_dir / "platform-tools" / exe_name,
             base_dir / "bin" / exe_name,
         ):
-            if candidate.is_file():
+            if candidate.is_file() and _is_executable_adb(candidate):
                 return str(candidate.resolve())
 
     # 2. Project root / script directory (where adb.exe & DLLs are embedded)
@@ -171,12 +186,12 @@ def find_embedded_adb() -> str:
         script_dir / "platform-tools" / exe_name,
         script_dir / "bin" / exe_name,
     ):
-        if candidate.is_file():
+        if candidate.is_file() and _is_executable_adb(candidate):
             return str(candidate.resolve())
 
     # 3. Saved user preferences from persistent config
     saved = load_user_preferences().get("adb_path")
-    if saved and Path(saved).is_file():
+    if saved and Path(saved).is_file() and _is_executable_adb(Path(saved)):
         return str(Path(saved).resolve())
 
     # 4. Standard platform-tools installation paths on Windows
@@ -188,12 +203,12 @@ def find_embedded_adb() -> str:
             Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Android" / "android-sdk" / "platform-tools" / "adb.exe",
         ]
         for p in standard_paths:
-            if p.is_file():
+            if p.is_file() and _is_executable_adb(p):
                 return str(p.resolve())
 
     # 5. System PATH
     which_adb = shutil.which("adb") or shutil.which("adb.exe")
-    if which_adb:
+    if which_adb and _is_executable_adb(Path(which_adb)):
         return str(Path(which_adb).resolve())
 
     # 6. Fallback
@@ -331,27 +346,19 @@ class BackupApp(ctk.CTk):
             adb_title_box, text="ADB Binary:", font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
         ).pack(side="left")
 
-        is_embedded = False
-        try:
-            exe_target = Path(__file__).resolve().parent / ("adb.exe" if os.name == "nt" else "adb")
-            is_embedded = (
-                Path(self.adb_path.get()).resolve() == exe_target.resolve()
-                or getattr(sys, "frozen", False)
-            )
-        except Exception:
-            is_embedded = False
-
-        if is_embedded:
-            ctk.CTkLabel(
-                adb_title_box,
-                text="⚡ Embedded",
-                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
-                fg_color=("#DCFCE7", "#14532D"),
-                text_color=("#166534", "#4ADE80"),
-                corner_radius=4,
-                padx=6,
-                pady=1,
-            ).pack(side="left", padx=(6, 0))
+        self.adb_badge = ctk.CTkLabel(
+            adb_title_box,
+            text="",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            corner_radius=4,
+            padx=6,
+            pady=1,
+            cursor="hand2",
+        )
+        self.adb_badge.pack(side="left", padx=(6, 0))
+        self._update_adb_badge()
+        self.adb_path.trace_add("write", lambda *args: self._update_adb_badge())
+        self.adb_badge.bind("<Button-1>", lambda e: self.reset_to_embedded_adb())
 
         adb_entry = ctk.CTkEntry(self.conn_card, textvariable=self.adb_path, height=32, font=ctk.CTkFont(size=12))
         adb_entry.grid(row=0, column=1, sticky="ew", padx=4, pady=(8, 4))
@@ -971,6 +978,34 @@ class BackupApp(ctk.CTk):
             self.expand_btn.configure(text="🗕 Restore")
             self.console_maximized = True
 
+    def _is_using_embedded_adb(self) -> bool:
+        try:
+            exe_target = Path(__file__).resolve().parent / ("adb.exe" if os.name == "nt" else "adb")
+            current = Path(self.adb_path.get()).resolve()
+            return current == exe_target.resolve() or bool(getattr(sys, "frozen", False))
+        except Exception:
+            return False
+
+    def _update_adb_badge(self) -> None:
+        if self._is_using_embedded_adb():
+            self.adb_badge.configure(
+                text="⚡ Embedded",
+                fg_color=("#DCFCE7", "#14532D"),
+                text_color=("#166534", "#4ADE80"),
+            )
+        else:
+            self.adb_badge.configure(
+                text="⚙ Custom (click to reset)",
+                fg_color=("gray85", "gray25"),
+                text_color=("gray30", "gray70"),
+            )
+
+    def reset_to_embedded_adb(self) -> None:
+        embedded = find_embedded_adb()
+        self.adb_path.set(embedded)
+        self._save_preferences()
+        self.detect_device()
+
     def _save_preferences(self) -> None:
         save_user_preferences({
             "adb_path": self.adb_path.get(),
@@ -1111,6 +1146,7 @@ class BackupApp(ctk.CTk):
                 errors="replace",
                 timeout=timeout,
                 check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise AdbError(f"Could not run ADB: {exc}") from exc
@@ -1127,10 +1163,21 @@ class BackupApp(ctk.CTk):
     def detect_device(self) -> None:
         try:
             result = self._run_adb("get-state", timeout=10)
-            if result.stdout.strip() != "device":
+            state_lines = [
+                l.strip()
+                for l in (result.stdout or "").splitlines()
+                if l.strip() and not l.strip().startswith("*")
+            ]
+            state = state_lines[-1] if state_lines else ""
+            if state != "device":
                 raise AdbError("No authorized Android device found.")
-            model = self._run_adb("shell", "getprop", "ro.product.model", timeout=10).stdout.strip()
-            self.device_name = model or "Android Device"
+            model_res = self._run_adb("shell", "getprop", "ro.product.model", timeout=10)
+            model_lines = [
+                l.strip()
+                for l in (model_res.stdout or "").splitlines()
+                if l.strip() and not l.strip().startswith("*")
+            ]
+            self.device_name = model_lines[-1] if model_lines else "Android Device"
             self.device_badge.configure(
                 text=f"🟢 {self.device_name} (Connected)",
                 fg_color=("#DCFCE7", "#14532D"),
@@ -1203,22 +1250,24 @@ class BackupApp(ctk.CTk):
     def _recover_adb_daemon(self) -> bool:
         self.events.put(("log", "  [Daemon Recovery] Resetting ADB server to clear sockets and re-establish USB link..."))
         adb_bin = self.adb_path.get()
+        cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
-            subprocess.run([adb_bin, "kill-server"], timeout=5, check=False)
+            subprocess.run([adb_bin, "kill-server"], timeout=5, check=False, creationflags=cflags)
         except Exception:
             pass
-        try:
-            subprocess.run(["taskkill", "/F", "/IM", "adb.exe"], capture_output=True, timeout=5, check=False)
-        except Exception:
-            pass
+        if os.name == "nt":
+            try:
+                subprocess.run(["taskkill", "/F", "/IM", "adb.exe"], capture_output=True, timeout=5, check=False, creationflags=cflags)
+            except Exception:
+                pass
         time.sleep(2.0)
         try:
-            subprocess.run([adb_bin, "start-server"], timeout=10, check=False)
+            subprocess.run([adb_bin, "start-server"], timeout=10, check=False, creationflags=cflags)
         except Exception:
             pass
         time.sleep(1.0)
         try:
-            res = subprocess.run([adb_bin, "wait-for-device"], timeout=35, check=False)
+            res = subprocess.run([adb_bin, "wait-for-device"], timeout=35, check=False, creationflags=cflags)
             if res.returncode == 0:
                 self.events.put(("log", "  [Daemon Recovery] Reconnected successfully to device."))
                 return True
@@ -1244,6 +1293,7 @@ class BackupApp(ctk.CTk):
                 return False, "Cancelled by user"
 
             try:
+                cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 proc = subprocess.Popen(
                     [self.adb_path.get(), "pull", "-a", full_path, str(target_path)],
                     stdout=subprocess.PIPE,
@@ -1251,6 +1301,7 @@ class BackupApp(ctk.CTk):
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    creationflags=cflags,
                 )
                 self.current_process = proc
                 try:
@@ -1310,7 +1361,12 @@ class BackupApp(ctk.CTk):
                     ("log", f"  [Retry {attempt}/{max_attempts}] {target_path.name}: {last_err}. Waiting for device...")
                 )
                 try:
-                    subprocess.run([self.adb_path.get(), "wait-for-device"], timeout=35, check=False)
+                    subprocess.run(
+                        [self.adb_path.get(), "wait-for-device"],
+                        timeout=35,
+                        check=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    )
                 except Exception:
                     pass
                 time.sleep(1.0)
@@ -1331,6 +1387,7 @@ class BackupApp(ctk.CTk):
                 return False, "Cancelled by user"
 
             try:
+                cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                 proc = subprocess.Popen(
                     [self.adb_path.get(), "push", str(local_path), remote_path],
                     stdout=subprocess.PIPE,
@@ -1338,6 +1395,7 @@ class BackupApp(ctk.CTk):
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    creationflags=cflags,
                 )
                 self.current_process = proc
                 try:
@@ -1388,7 +1446,12 @@ class BackupApp(ctk.CTk):
                     ("log", f"  [Retry {attempt}/{max_attempts}] {local_path.name}: {last_err}. Waiting for device...")
                 )
                 try:
-                    subprocess.run([self.adb_path.get(), "wait-for-device"], timeout=35, check=False)
+                    subprocess.run(
+                        [self.adb_path.get(), "wait-for-device"],
+                        timeout=35,
+                        check=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    )
                 except Exception:
                     pass
                 time.sleep(1.0)
@@ -1661,6 +1724,7 @@ class BackupApp(ctk.CTk):
                             batch_success = False
                             batch_err = ""
                             try:
+                                cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                                 proc = subprocess.Popen(
                                     [self.adb_path.get(), "pull", "-a"] + remote_paths + [str(local_target_dir)],
                                     stdout=subprocess.PIPE,
@@ -1668,6 +1732,7 @@ class BackupApp(ctk.CTk):
                                     text=True,
                                     encoding="utf-8",
                                     errors="replace",
+                                    creationflags=cflags,
                                 )
                                 self.current_process = proc
                                 try:
@@ -1942,6 +2007,7 @@ class BackupApp(ctk.CTk):
                             batch_success = False
                             batch_err = ""
                             try:
+                                cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
                                 proc = subprocess.Popen(
                                     [self.adb_path.get(), "push"] + batch_paths + [f"{remote_dir}/"],
                                     stdout=subprocess.PIPE,
@@ -1949,6 +2015,7 @@ class BackupApp(ctk.CTk):
                                     text=True,
                                     encoding="utf-8",
                                     errors="replace",
+                                    creationflags=cflags,
                                 )
                                 self.current_process = proc
                                 try:

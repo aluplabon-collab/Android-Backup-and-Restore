@@ -18,7 +18,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Persistent User Preferences**:
   - Automatically saves and restores last-used ADB path, backup destination, and restore source directory in `~/.android_backup_suite.json` across app updates and machine reboots.
 - **UI "⚡ Embedded" Indicator Badge**:
-  - Highlights whether the currently active ADB binary is the bundled zero-configuration binary or an external custom binary.
+  - Highlights whether the currently active ADB binary is the bundled zero-configuration binary or an external custom binary, with a one-click reset to embedded ADB.
+
+### Fixed
+- **First-Launch Device Detection False Negative**: Fixed a bug where `adb get-state` emitted daemon startup banners (`* daemon not running; starting now...`) on fresh launches, causing device state checks to fail despite the device being connected.
+- **Console Window Flashing**: Configured `CREATE_NO_WINDOW` across all ADB process spawns, eliminating momentary black terminal popups on Windows.
+- **Missing DLL Guard**: Added `_is_executable_adb()` validation ensuring candidate binaries and their companion DLLs execute successfully before being selected.
 
 ---
 
