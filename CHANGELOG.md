@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.6.0] - 2026-11-13
+
+### Fixed
+- **Category Overlap & Path Deduplication**:
+  - Resolved category path conflict between "Screenshots" (`Pictures/Screenshots`) and "Pictures" (`Pictures`). Previously, selecting both categories resulted in screenshots either being excluded or transferred redundantly.
+  - Implemented intelligent subpath deduplication across both backup and restore pipelines so child categories are transferred cleanly to their dedicated category folders without duplication.
+- **Daemon Recovery Process Safety**:
+  - Replaced indiscriminate `taskkill /F /IM adb.exe` in `_recover_adb_daemon()` with standard, scoped `adb kill-server`.
+  - Ensures auto-recovery will never disconnect external Android Studio emulators, VS Code debugging sessions, or other system ADB clients.
+- **Thread Synchronization & Race Condition Guard**:
+  - Added `threading.Lock()` protecting `self.running` and `self.current_process` across GUI threads and transfer worker threads.
+  - Prevents race conditions during rapid button clicks or concurrent cancel (`stop_operation`) operations.
+- **Protected File Scans & Stat Queries**:
+  - Wrapped `scan_restore_source()`, `start_restore()`, and `_restore_worker()` with resilient exception handling for `stat()` and `rglob()` calls.
+  - Prevents unexpected crashes on locked, permission-restricted, or externally modified files.
+- **Developer Default Path Removal**:
+  - Removed internal developer directory override (`D:/Wondershare/New folder`), ensuring clean defaults for public users.
+- **Atomic Directory Creation**:
+  - Replaced conditional `exists()` checks with `mkdir(parents=True, exist_ok=True)` in `_backup_worker` to prevent directory creation TOCTOU race conditions.
+
+---
+
 ## [2.5.0] - 2026-11-11
 
 ### Added

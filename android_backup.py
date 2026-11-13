@@ -243,9 +243,6 @@ class BackupApp(ctk.CTk):
 
         # Default paths with persistent memory
         default_dir = Path.home() / "Android Backups"
-        local_override = Path("D:/Wondershare/New folder")
-        if local_override.exists():
-            default_dir = local_override
 
         saved_dest = self.prefs.get("destination")
         default_dest = saved_dest if saved_dest and Path(saved_dest).is_dir() else str(default_dir)
@@ -258,6 +255,7 @@ class BackupApp(ctk.CTk):
 
         self.status = ctk.StringVar(value="Connecting...")
         self.device_name = "No device detected"
+        self._lock = threading.Lock()
         self.running = False
         self.stop_requested = threading.Event()
         self.current_process: subprocess.Popen[str] | None = None
@@ -1106,24 +1104,43 @@ class BackupApp(ctk.CTk):
             var = self.restore_folder_vars.get(label)
 
             if cat_dir.is_dir():
-                files = [p for p in cat_dir.rglob("*") if p.is_file()]
-                if files:
-                    total_bytes = sum(p.stat().st_size for p in files)
-                    if chk:
-                        chk.configure(state="normal")
-                    if ico:
-                        ico.configure(image=self.category_icons[label])
-                    if name_lbl:
-                        name_lbl.configure(text_color=("gray10", "gray90"))
-                    if badge_lbl:
-                        badge_lbl.configure(
-                            text=f"{len(files):,} files ({format_size(total_bytes)})",
-                            text_color=("#166534", "#4ADE80"),
-                        )
-                    if var:
-                        var.set(True)
-                    self.detected_restore_files[label] = files
-                    continue
+                raw_files: list[Path] = []
+                try:
+                    for p in cat_dir.rglob("*"):
+                        try:
+                            if p.is_file():
+                                raw_files.append(p)
+                        except (OSError, PermissionError):
+                            continue
+                except (OSError, PermissionError):
+                    pass
+
+                if raw_files:
+                    valid_files: list[Path] = []
+                    total_bytes = 0
+                    for p in raw_files:
+                        try:
+                            total_bytes += p.stat().st_size
+                            valid_files.append(p)
+                        except (OSError, PermissionError):
+                            continue
+
+                    if valid_files:
+                        if chk:
+                            chk.configure(state="normal")
+                        if ico:
+                            ico.configure(image=self.category_icons[label])
+                        if name_lbl:
+                            name_lbl.configure(text_color=("gray10", "gray90"))
+                        if badge_lbl:
+                            badge_lbl.configure(
+                                text=f"{len(valid_files):,} files ({format_size(total_bytes)})",
+                                text_color=("#166534", "#4ADE80"),
+                            )
+                        if var:
+                            var.set(True)
+                        self.detected_restore_files[label] = valid_files
+                        continue
 
             if chk:
                 chk.configure(state="disabled")
@@ -1252,15 +1269,10 @@ class BackupApp(ctk.CTk):
         adb_bin = self.adb_path.get()
         cflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         try:
-            subprocess.run([adb_bin, "kill-server"], timeout=5, check=False, creationflags=cflags)
+            subprocess.run([adb_bin, "kill-server"], timeout=8, check=False, creationflags=cflags)
         except Exception:
             pass
-        if os.name == "nt":
-            try:
-                subprocess.run(["taskkill", "/F", "/IM", "adb.exe"], capture_output=True, timeout=5, check=False, creationflags=cflags)
-            except Exception:
-                pass
-        time.sleep(2.0)
+        time.sleep(1.5)
         try:
             subprocess.run([adb_bin, "start-server"], timeout=10, check=False, creationflags=cflags)
         except Exception:
@@ -1303,7 +1315,8 @@ class BackupApp(ctk.CTk):
                     errors="replace",
                     creationflags=cflags,
                 )
-                self.current_process = proc
+                with self._lock:
+                    self.current_process = proc
                 try:
                     stdout, stderr = proc.communicate(timeout=timeout)
                 except subprocess.TimeoutExpired:
@@ -1311,7 +1324,9 @@ class BackupApp(ctk.CTk):
                     last_err = f"Transfer timed out after {timeout}s"
                     continue
                 finally:
-                    self.current_process = None
+                    with self._lock:
+                        if self.current_process is proc:
+                            self.current_process = None
 
                 if proc.returncode == 0 and target_path.is_file():
                     if remote_size is None or target_path.stat().st_size == remote_size:
@@ -1397,7 +1412,8 @@ class BackupApp(ctk.CTk):
                     errors="replace",
                     creationflags=cflags,
                 )
-                self.current_process = proc
+                with self._lock:
+                    self.current_process = proc
                 try:
                     stdout, stderr = proc.communicate(timeout=timeout)
                 except subprocess.TimeoutExpired:
@@ -1405,7 +1421,9 @@ class BackupApp(ctk.CTk):
                     last_err = f"Transfer timed out after {timeout}s"
                     continue
                 finally:
-                    self.current_process = None
+                    with self._lock:
+                        if self.current_process is proc:
+                            self.current_process = None
 
                 if proc.returncode == 0:
                     return True, ""
@@ -1459,18 +1477,12 @@ class BackupApp(ctk.CTk):
         return False, last_err
 
     def start_backup(self) -> None:
-        if self.running:
-            return
+        with self._lock:
+            if self.running:
+                return
+
         selected = [
             (label, path) for label, path in PHONE_FOLDERS.items() if self.folder_vars[label].get()
-        ]
-        selected = [
-            (label, path)
-            for label, path in selected
-            if not any(
-                other_path != path and path.startswith(other_path + "/")
-                for _, other_path in selected
-            )
         ]
         if not selected:
             messagebox.showwarning("Nothing selected", "Select at least one phone folder.")
@@ -1497,8 +1509,10 @@ class BackupApp(ctk.CTk):
         ).start()
 
     def start_restore(self) -> None:
-        if self.running:
-            return
+        with self._lock:
+            if self.running:
+                return
+
         resolved = resolve_backup_dir(self.restore_source.get())
         if resolved is None or not resolved.is_dir():
             messagebox.showerror("Invalid backup folder", "Select a valid backup folder.")
@@ -1515,8 +1529,15 @@ class BackupApp(ctk.CTk):
             messagebox.showwarning("Nothing selected", "Select at least one category to restore.")
             return
 
-        total_files = sum(len(f) for _, _, f in selected_categories)
-        total_bytes = sum(sum(p.stat().st_size for p in f) for _, _, f in selected_categories)
+        total_files = 0
+        total_bytes = 0
+        for _, _, files in selected_categories:
+            total_files += len(files)
+            for p in files:
+                try:
+                    total_bytes += p.stat().st_size
+                except (OSError, PermissionError):
+                    pass
 
         confirmed = messagebox.askyesno(
             "Confirm Restore",
@@ -1543,16 +1564,18 @@ class BackupApp(ctk.CTk):
         ).start()
 
     def stop_operation(self) -> None:
-        if not self.running:
-            return
-        self.stop_requested.set()
+        with self._lock:
+            if not self.running:
+                return
+            self.stop_requested.set()
+            proc = self.current_process
         self.status.set("Stopping operation, please wait...")
         self.metric_state.configure(text="Stopping")
         self.backup_stop_btn.configure(state="disabled")
         self.restore_stop_btn.configure(state="disabled")
-        if self.current_process:
+        if proc:
             try:
-                self.current_process.terminate()
+                proc.terminate()
             except Exception:
                 pass
 
@@ -1569,7 +1592,7 @@ class BackupApp(ctk.CTk):
             backup_dir = target_root / "Android Backup"
 
         try:
-            backup_dir.mkdir(parents=True, exist_ok=False) if not backup_dir.exists() else None
+            backup_dir.mkdir(parents=True, exist_ok=True)
             self.events.put(("log", f"=== Starting Backup ==="))
             self.events.put(("log", f"Destination: {backup_dir}"))
             self.events.put(("log", "Scanning phone folders..."))
@@ -1583,6 +1606,21 @@ class BackupApp(ctk.CTk):
                     break
                 self.events.put(("status", f"Scanning {label}..."))
                 files = self._list_remote_files(phone_path)
+
+                # Avoid duplicate transfers: if another selected category is a child of this category,
+                # exclude its subpath from this category's backup.
+                p_norm = phone_path.rstrip("/") + "/"
+                child_prefixes = [
+                    other_path[len(p_norm):].rstrip("/") + "/"
+                    for _, other_path in selected
+                    if other_path != phone_path and other_path.startswith(p_norm)
+                ]
+                if child_prefixes:
+                    files = [
+                        item for item in files
+                        if not any(item[1].startswith(cp) for cp in child_prefixes)
+                    ]
+
                 folder_bytes = sum(sz for _, _, sz in files if sz is not None)
                 total_file_count += len(files)
                 total_bytes += folder_bytes
@@ -1734,14 +1772,17 @@ class BackupApp(ctk.CTk):
                                     errors="replace",
                                     creationflags=cflags,
                                 )
-                                self.current_process = proc
+                                with self._lock:
+                                    self.current_process = proc
                                 try:
                                     stdout, stderr = proc.communicate(timeout=timeout)
                                 except subprocess.TimeoutExpired:
                                     proc.kill()
                                     batch_err = f"Batch pull timed out after {timeout}s"
                                 finally:
-                                    self.current_process = None
+                                    with self._lock:
+                                        if self.current_process is proc:
+                                            self.current_process = None
 
                                 if proc.returncode == 0:
                                     all_ok = True
@@ -1858,7 +1899,13 @@ class BackupApp(ctk.CTk):
             self.events.put(("status", "Preparing restore..."))
 
             total_file_count = sum(len(files) for _, _, files in selected_categories)
-            total_bytes = sum(sum(p.stat().st_size for p in files) for _, _, files in selected_categories)
+            total_bytes = 0
+            for _, _, f_list in selected_categories:
+                for p in f_list:
+                    try:
+                        total_bytes += p.stat().st_size
+                    except (OSError, PermissionError):
+                        pass
 
             self.events.put(("log", f"Total files to restore: {total_file_count:,} ({format_size(total_bytes)})\n"))
 
@@ -1886,12 +1933,26 @@ class BackupApp(ctk.CTk):
                 cat_dir = backup_dir / label
                 files_to_transfer: list[tuple[Path, str, int]] = []
 
+                # Avoid duplicate restore if another selected category is a child of this category
+                p_norm = phone_path.rstrip("/") + "/"
+                child_prefixes = [
+                    other_path[len(p_norm):].rstrip("/") + "/"
+                    for _, other_path, _ in selected_categories
+                    if other_path != phone_path and other_path.startswith(p_norm)
+                ]
+
                 for local_file in local_files:
                     if self.stop_requested.is_set():
                         break
 
-                    file_size = local_file.stat().st_size
+                    try:
+                        file_size = local_file.stat().st_size
+                    except (OSError, PermissionError):
+                        continue
                     rel_path = local_file.relative_to(cat_dir).as_posix()
+
+                    if child_prefixes and any(rel_path.startswith(cp) for cp in child_prefixes):
+                        continue
 
                     if incremental and rel_path in existing_remote:
                         if existing_remote[rel_path] == file_size:
@@ -2017,14 +2078,17 @@ class BackupApp(ctk.CTk):
                                     errors="replace",
                                     creationflags=cflags,
                                 )
-                                self.current_process = proc
+                                with self._lock:
+                                    self.current_process = proc
                                 try:
                                     stdout, stderr = proc.communicate(timeout=timeout)
                                 except subprocess.TimeoutExpired:
                                     proc.kill()
                                     batch_err = f"Batch push timed out after {timeout}s"
                                 finally:
-                                    self.current_process = None
+                                    with self._lock:
+                                        if self.current_process is proc:
+                                            self.current_process = None
 
                                 if proc.returncode == 0:
                                     batch_success = True
@@ -2142,7 +2206,10 @@ class BackupApp(ctk.CTk):
             self.events.put(("error", f"Restore failed: {exc}"))
 
     def _set_running_state(self, is_running: bool, is_backup: bool = True) -> None:
-        self.running = is_running
+        with self._lock:
+            self.running = is_running
+            if not is_running:
+                self.current_process = None
         self.stop_requested.clear()
         if is_running:
             if is_backup:
